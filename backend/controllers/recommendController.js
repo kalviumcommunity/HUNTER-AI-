@@ -18,7 +18,8 @@ export const handleGeminiRecommendation = async (req, res) => {
       ${systemPrompt}
       ${userPrompt(mood, personality)}
       User request: ${customUserPrompt}
-      Respond ONLY in valid JSON format:
+      Respond ONLY in valid JSON format and then write END_OF_RECOMMENDATION
+:
       {
         "recommendations": [
           {
@@ -32,12 +33,14 @@ export const handleGeminiRecommendation = async (req, res) => {
     `;
 
     const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: temperature ?? 0.7,
-        responseMimeType: "application/json", // forces JSON output
-      }
-    });
+  contents: [{ role: "user", parts: [{ text: prompt }] }],
+  generationConfig: {
+    temperature: temperature ?? 0.9,
+    responseMimeType: "application/json",
+    stopSequences: ["END_OF_RECOMMENDATION", "---", "STOP"], // you can choose any marker
+  }
+});
+
 
     const parsed = JSON.parse(result.response.text());
     res.json(parsed);
