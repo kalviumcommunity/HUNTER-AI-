@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import dotenv from "dotenv";
+import { systemPrompt } from "../utils/prompt.js"; // ✅ import system prompt
 dotenv.config();
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -14,7 +15,10 @@ export const handleGeminiRecommendation = async (req, res) => {
   try {
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    const result = await model.generateContent(userPrompt);
+    // ✅ Combine system and user prompts
+    const fullPrompt = `${systemPrompt}\n\nUser: ${userPrompt}`;
+
+    const result = await model.generateContent(fullPrompt);
     const response = result.response;
     const text = await response.text();
 
