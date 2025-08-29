@@ -7,10 +7,20 @@ import { systemPrompt } from "../utils/prompt.js"; // keep if you want legacy te
 dotenv.config();
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// In-memory "session" state for demo (replace with Redis/db later)
-const sessionState = { avoidList: [], recentTurns: [] };
+// Enhanced session state with better context tracking
+const sessionState = { 
+  avoidList: [], 
+  recentTurns: [],
+  userPreferences: {
+    genres: [],
+    authors: [],
+    themes: [],
+    readingMood: null
+  },
+  conversationContext: []
+};
 
-// Optional: function calling — declare tools only if you added them earlier
+// Enhanced function declarations for better tool integration
 const functionDeclarations = [
   {
     name: "searchBookMetadata",
@@ -35,8 +45,113 @@ const functionDeclarations = [
       },
       required: ["title"]
     }
+  },
+  {
+    name: "getSimilarBooks",
+    description: "Find books similar to a given title or author.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        author: { type: "string" },
+        genre: { type: "string" }
+      },
+      required: ["title"]
+    }
   }
 ];
+
+/**
+ * Extract user preferences from input for better context
+ */
+function extractUserPreferences(input, mood, personality) {
+  const inputLower = input.toLowerCase();
+  const preferences = {
+    genres: [],
+    authors: [],
+    themes: [],
+    readingMood: mood || null
+  };
+
+  // Genre detection
+  const genreKeywords = {
+    fantasy: ['fantasy', 'magic', 'dragon', 'wizard', 'epic'],
+    romance: ['romance', 'love', 'relationship', 'dating'],
+    horror: ['horror', 'scary', 'thriller', 'suspense'],
+    scifi: ['science fiction', 'sci-fi', 'space', 'future', 'technology'],
+    mystery: ['mystery', 'detective', 'crime', 'investigation'],
+    historical: ['historical', 'period', 'ancient', 'medieval'],
+    contemporary: ['contemporary', 'modern', 'realistic', 'current']
+  };
+
+  Object.entries(genreKeywords).forEach(([genre, keywords]) => {
+    if (keywords.some(keyword => inputLower.includes(keyword))) {
+      preferences.genres.push(genre);
+    }
+  });
+
+  // Theme detection
+  const themeKeywords = {
+    'coming-of-age': ['coming of age', 'growing up', 'adolescence', 'teen'],
+    'family': ['family', 'parent', 'child', 'sibling'],
+    'friendship': ['friend', 'friendship', 'companionship'],
+    'adventure': ['adventure', 'journey', 'quest', 'exploration'],
+    'political': ['political', 'government', 'power', 'leadership'],
+    'philosophical': ['philosophy', 'meaning', 'purpose', 'existence']
+  };
+
+  Object.entries(themeKeywords).forEach(([theme, keywords]) => {
+    if (keywords.some(keyword => inputLower.includes(keyword))) {
+      preferences.themes.push(theme);
+    }
+  });
+
+  // Author detection (basic)
+  const authorPattern = /by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i;
+  const authorMatch = input.match(authorPattern);
+  if (authorMatch) {
+    preferences.authors.push(authorMatch[1]);
+  }
+
+  return preferences;
+}
+
+/**
+ * Update session state with new information
+ */
+function updateSessionState(input, mood, personality, recommendations) {
+  const newPreferences = extractUserPreferences(input, mood, personality);
+  
+  // Update user preferences
+  sessionState.userPreferences.genres = [...new Set([...sessionState.userPreferences.genres, ...newPreferences.genres])];
+  sessionState.userPreferences.themes = [...new Set([...sessionState.userPreferences.themes, ...newPreferences.themes])];
+  sessionState.userPreferences.authors = [...new Set([...sessionState.userPreferences.authors, ...newPreferences.authors])];
+  if (newPreferences.readingMood) {
+    sessionState.userPreferences.readingMood = newPreferences.readingMood;
+  }
+
+  // Update avoid list with new recommendations
+  const newTitles = (recommendations || []).map(r => r.title).filter(Boolean);
+  sessionState.avoidList.push(...newTitles);
+  sessionState.avoidList = Array.from(new Set(sessionState.avoidList)).slice(-30);
+
+  // Update conversation context
+  sessionState.conversationContext.push({
+    userInput: input,
+    mood: mood,
+    personality: personality,
+    recommendations: recommendations,
+    timestamp: new Date()
+  });
+
+  // Keep only recent context (last 10 interactions)
+  sessionState.conversationContext = sessionState.conversationContext.slice(-10);
+
+  // Update recent turns for prompt building
+  sessionState.recentTurns.push({ role: "user", text: input || "" });
+  sessionState.recentTurns.push({ role: "assistant", text: JSON.stringify(recommendations) });
+  sessionState.recentTurns = sessionState.recentTurns.slice(-12);
+}
 
 export const handleGeminiRecommendation = async (req, res) => {
   try {
@@ -48,31 +163,34 @@ export const handleGeminiRecommendation = async (req, res) => {
       temperature = 0.7
     } = req.body || {};
 
-    // 1) Build the dynamic prompt
+    // 1) Build the enhanced dynamic prompt with multishot examples
     const prompt = buildPrompt({
       input,
       mood,
       personality,
       avoidList: sessionState.avoidList,
       recentTurns: sessionState.recentTurns,
-      wantBuyLinks
+      wantBuyLinks,
+      userPreferences: sessionState.userPreferences
     });
 
     const model = genAI.getGenerativeModel({
       model: "gemini-1.5-flash",
-      tools: { functionDeclarations } // safe even if you don't use them
+      tools: { functionDeclarations }
     });
 
-    // 2) First pass — model may emit function calls or final JSON
+    // 2) Generate content with enhanced context
     let result = await model.generateContent({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
         temperature,
-        responseMimeType: "application/json"
+        responseMimeType: "application/json",
+        topP: 0.9,
+        topK: 40
       }
     });
 
-    // 3) (Optional) minimal tool loop — skip if you haven’t implemented tools
+    // 3) Handle function calls if they occur
     const cands = result.response.candidates || [];
     const pendingCall = cands
       .flatMap(c => (c.content?.parts || []))
@@ -80,38 +198,62 @@ export const handleGeminiRecommendation = async (req, res) => {
 
     if (pendingCall) {
       // You'd run your tool here and send functionResponse back.
-      // To keep focus on dynamic prompting, you can omit tool execution for now.
+      // To keep focus on multishot prompting, you can omit tool execution for now.
       // Or wire it if you already added bookTools.js earlier.
+      console.log("Function call detected:", pendingCall.name);
     }
 
-    // 4) Strict JSON parse + tiny repair fallback
+    // 4) Parse and validate JSON response
     let outText = result.response.text();
     let data;
     try {
       data = JSON.parse(outText);
     } catch {
-      // minimal repair: trim junk before first { and after last }
+      // Enhanced JSON repair with better error handling
       const start = outText.indexOf("{");
       const end = outText.lastIndexOf("}");
       if (start !== -1 && end !== -1) {
         const sliced = outText.slice(start, end + 1);
-        data = JSON.parse(sliced);
+        try {
+          data = JSON.parse(sliced);
+        } catch (parseError) {
+          console.error("JSON repair failed:", parseError);
+          throw new Error("Invalid JSON from model after repair attempt");
+        }
       } else {
-        throw new Error("Invalid JSON from model");
+        throw new Error("Invalid JSON from model - no valid JSON structure found");
       }
     }
 
-    // 5) Update avoidList/recentTurns for next call (dynamic memory)
-    const newTitles = (data.recommendations || []).map(r => r.title).filter(Boolean);
-    sessionState.avoidList.push(...newTitles);
-    sessionState.avoidList = Array.from(new Set(sessionState.avoidList)).slice(-30);
-    sessionState.recentTurns.push({ role: "user", text: input || "" });
-    sessionState.recentTurns.push({ role: "assistant", text: JSON.stringify(data) });
-    sessionState.recentTurns = sessionState.recentTurns.slice(-12);
+    // 5) Update session state with new information
+    updateSessionState(input, mood, personality, data.recommendations || []);
 
-    res.json(data);
+    // 6) Add context information to response for debugging/insights
+    const responseWithContext = {
+      ...data,
+      context: {
+        userPreferences: sessionState.userPreferences,
+        sessionLength: sessionState.conversationContext.length,
+        avoidListSize: sessionState.avoidList.length
+      }
+    };
+
+    res.json(responseWithContext);
   } catch (error) {
     console.error("Error generating recommendations:", error);
-    res.status(500).json({ error: "Failed to generate recommendations" });
+    
+    // Enhanced error response with context
+    const errorResponse = {
+      error: "Failed to generate recommendations",
+      message: error.message,
+      context: {
+        sessionState: {
+          conversationLength: sessionState.conversationContext.length,
+          lastInput: sessionState.recentTurns[sessionState.recentTurns.length - 1]?.text || "None"
+        }
+      }
+    };
+    
+    res.status(500).json(errorResponse);
   }
 };
