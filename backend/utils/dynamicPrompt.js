@@ -1,5 +1,6 @@
 // backend/utils/dynamicPrompt.js
 import { systemPrompt as baseSystem } from "./prompt.js";
+import { estimateTokens, truncateTextToTokens, truncateArrayToBudget } from "./tokenizer.js";
 
 /**
  * Lightweight language detector (no deps). Returns 'en' by default.
@@ -304,12 +305,17 @@ function selectRelevantExamples(input, mood, personality) {
   return selectedExamples.slice(0, 3); // Limit to 3 examples for token efficiency
 }
 
+/** Token budgeting defaults (approximate) */
+const DEFAULT_BUDGET = {
+  maxPromptTokens: 7000,          // overall prompt target for gemini 1.5 flash (safety margin)
+  systemMax: 1200,                // system section cap
+  examplesMax: 2200,              // examples section cap
+  historyMax: 900,                // history cap
+  taskMax: 2200                   // user + task + schema cap
+};
+
 /**
- * Compose the final prompt with multishot examples.
- *  - system: persona+safety+style
- *  - instructions: task + schema
- *  - context: mood/personality + recent history + avoid list + user preferences
- *  - examples: multiple diverse examples for better AI learning
+ * Compose the final prompt with multishot examples and token budgeting.
  */
 export function buildPrompt({
   input,
@@ -318,7 +324,8 @@ export function buildPrompt({
   avoidList = [],
   recentTurns = [],
   wantBuyLinks = false,
-  userPreferences = {}
+  userPreferences = {},
+  tokenBudget = DEFAULT_BUDGET
 }) {
   const { lang, persona, callToolsHint, avoidRepeat } = runtimePolicy({
     input,
@@ -330,7 +337,8 @@ export function buildPrompt({
   // Select multiple relevant examples for better learning
   const selectedExamples = selectRelevantExamples(input, mood, personality);
 
-  const system = `
+  // SYSTEM
+  let system = `
 You are Hunter, a ${persona} book recommendation AI who loves helping readers discover their next favorite book.
 
 ${baseSystem.replace("gruff, sarcastic, and a bit cynical, but ultimately helpful and knowledgeable.", "").trim()}
@@ -349,17 +357,22 @@ General rules:
 - Learn from the examples provided to understand the style and depth expected
 - Consider the user's reading history and preferences when making recommendations
 `.trim();
+  system = truncateTextToTokens(system, tokenBudget.systemMax);
 
-  const historyText = recentTurns
-    .slice(-6)
-    .map(t => `${t.role.toUpperCase()}: ${t.text}`)
-    .join("\n");
+  // HISTORY (newest first, cap tokens)
+  const historyStrings = recentTurns
+    .slice(-12)
+    .map(t => `${t.role.toUpperCase()}: ${t.text}`);
+  const { items: cappedHistory } = truncateArrayToBudget(historyStrings, tokenBudget.historyMax);
+  const historyText = cappedHistory.join("\n");
 
-  const examplesText = selectedExamples
-    .map(ex => `USER: ${ex.user}\nASSISTANT(JSON): ${JSON.stringify(ex.assistant)}`)
-    .join("\n\n");
+  // EXAMPLES (flatten to strings and cap)
+  const exampleStrings = selectedExamples
+    .map(ex => `USER: ${ex.user}\nASSISTANT(JSON): ${JSON.stringify(ex.assistant)}`);
+  const { items: cappedExamples } = truncateArrayToBudget(exampleStrings, tokenBudget.examplesMax);
+  const examplesText = cappedExamples.join("\n\n");
 
-  // Enhanced user context with preferences
+  // TASK + CONTEXT
   const userContext = `
 User context:
 - Mood: ${mood || "Not specified"}
@@ -370,7 +383,7 @@ User context:
 - avoidList: ${avoidList.length ? avoidList.join("; ") : "[]"}
 `.trim();
 
-  const task = `
+  let task = `
 The user said: "${input || "No input"}"
 
 ${userContext}
@@ -383,11 +396,31 @@ Study the examples above to understand the expected style, depth, and structure 
 
 ${OUTPUT_SCHEMA}
 `.trim();
+  task = truncateTextToTokens(task, tokenBudget.taskMax);
 
-  // the whole thing the model sees
-  const finalPrompt = [system, historyText && `\nHistory:\n${historyText}`, examplesText && `\nExamples:\n${examplesText}`, task]
-    .filter(Boolean)
-    .join("\n\n");
+  // Combine sections and, if needed, shave examples/history to fit overall budget
+  let sections = [system, historyText && `\nHistory:\n${historyText}`, examplesText && `\nExamples:\n${examplesText}`, task].filter(Boolean);
+  let prompt = sections.join("\n\n");
 
-  return finalPrompt;
+  const totalTokens = estimateTokens(prompt);
+  if (totalTokens > tokenBudget.maxPromptTokens) {
+    // Prefer shaving examples, then history
+    let examplesOnly = examplesText;
+    let historyOnly = historyText;
+    let shavedPrompt = sections.join("\n\n");
+
+    if (examplesOnly) {
+      const shavedExamples = truncateTextToTokens(examplesOnly, Math.floor(tokenBudget.examplesMax * 0.7));
+      sections = [system, historyText && `\nHistory:\n${historyOnly}`, shavedExamples && `\nExamples:\n${shavedExamples}`, task].filter(Boolean);
+      shavedPrompt = sections.join("\n\n");
+    }
+    if (estimateTokens(shavedPrompt) > tokenBudget.maxPromptTokens && historyOnly) {
+      const shavedHistory = truncateTextToTokens(historyOnly, Math.floor(tokenBudget.historyMax * 0.6));
+      sections = [system, shavedHistory && `\nHistory:\n${shavedHistory}`, examplesText && `\nExamples:\n${examplesText}`, task].filter(Boolean);
+      shavedPrompt = sections.join("\n\n");
+    }
+    prompt = shavedPrompt;
+  }
+
+  return prompt;
 }

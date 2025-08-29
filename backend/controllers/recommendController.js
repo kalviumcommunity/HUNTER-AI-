@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { buildPrompt } from "../utils/dynamicPrompt.js"; // NEW
 import { systemPrompt } from "../utils/prompt.js"; // keep if you want legacy text
+import { estimateTokens } from "../utils/tokenizer.js";
 
 dotenv.config();
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -174,6 +175,8 @@ export const handleGeminiRecommendation = async (req, res) => {
       userPreferences: sessionState.userPreferences
     });
 
+    const estimatedPromptTokens = estimateTokens(prompt);
+
     const model = genAI.getGenerativeModel({
       model: "gemini-1.5-flash",
       tools: { functionDeclarations }
@@ -197,9 +200,6 @@ export const handleGeminiRecommendation = async (req, res) => {
       .find(p => p.functionCall)?.functionCall;
 
     if (pendingCall) {
-      // You'd run your tool here and send functionResponse back.
-      // To keep focus on multishot prompting, you can omit tool execution for now.
-      // Or wire it if you already added bookTools.js earlier.
       console.log("Function call detected:", pendingCall.name);
     }
 
@@ -209,7 +209,6 @@ export const handleGeminiRecommendation = async (req, res) => {
     try {
       data = JSON.parse(outText);
     } catch {
-      // Enhanced JSON repair with better error handling
       const start = outText.indexOf("{");
       const end = outText.lastIndexOf("}");
       if (start !== -1 && end !== -1) {
@@ -225,6 +224,9 @@ export const handleGeminiRecommendation = async (req, res) => {
       }
     }
 
+    const responseTextForEstimate = JSON.stringify(data);
+    const estimatedResponseTokens = estimateTokens(responseTextForEstimate);
+
     // 5) Update session state with new information
     updateSessionState(input, mood, personality, data.recommendations || []);
 
@@ -235,14 +237,17 @@ export const handleGeminiRecommendation = async (req, res) => {
         userPreferences: sessionState.userPreferences,
         sessionLength: sessionState.conversationContext.length,
         avoidListSize: sessionState.avoidList.length
+      },
+      tokenReport: {
+        estimatedPromptTokens: estimatedPromptTokens,
+        estimatedResponseTokens: estimatedResponseTokens,
+        estimatedTotalTokens: estimatedPromptTokens + estimatedResponseTokens
       }
     };
 
     res.json(responseWithContext);
   } catch (error) {
     console.error("Error generating recommendations:", error);
-    
-    // Enhanced error response with context
     const errorResponse = {
       error: "Failed to generate recommendations",
       message: error.message,
@@ -253,7 +258,6 @@ export const handleGeminiRecommendation = async (req, res) => {
         }
       }
     };
-    
     res.status(500).json(errorResponse);
   }
 };
