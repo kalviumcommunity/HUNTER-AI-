@@ -1,18 +1,7 @@
 // backend/utils/vectorStore.js
 import fs from 'fs';
 import path from 'path';
-
-function cosineSimilarity(a = [], b = []) {
-	let dot = 0, aMag = 0, bMag = 0;
-	const len = Math.min(a.length, b.length);
-	for (let i = 0; i < len; i++) {
-		dot += a[i] * b[i];
-		aMag += a[i] * a[i];
-		bMag += b[i] * b[i];
-	}
-	const denom = Math.sqrt(aMag) * Math.sqrt(bMag) || 1e-8;
-	return dot / denom;
-}
+import { cosineSimilarity } from './similarity.js';
 
 export class JsonVectorStore {
 	constructor(filePath) {
