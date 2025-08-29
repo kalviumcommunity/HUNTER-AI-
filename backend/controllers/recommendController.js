@@ -168,7 +168,8 @@ export const handleGeminiRecommendation = async (req, res) => {
       temperature = 0.7,
       useRAG = false,
       topK = 5,
-      topP = 0.9
+      topP = 0.9,
+      modelTopK = 40
     } = req.body || {};
 
     // Optional retrieval
@@ -214,7 +215,7 @@ export const handleGeminiRecommendation = async (req, res) => {
         temperature,
         responseMimeType: "application/json",
         topP,
-        topK: 40
+        topK: modelTopK
       }
     });
 
@@ -268,7 +269,7 @@ export const handleGeminiRecommendation = async (req, res) => {
         estimatedPromptTokens: estimatedPromptTokens,
         estimatedResponseTokens: estimatedResponseTokens,
         estimatedTotalTokens: estimatedPromptTokens + estimatedResponseTokens,
-        sampling: { topP, temperature }
+        sampling: { topP, temperature, topK: modelTopK }
       }
     };
 
