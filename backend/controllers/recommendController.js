@@ -4,7 +4,8 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { buildPrompt } from "../utils/dynamicPrompt.js"; // NEW
 import { systemPrompt } from "../utils/prompt.js"; // keep if you want legacy text
 import { estimateTokens } from "../utils/tokenizer.js";
-import { JsonVectorStore } from "../utils/vectorStore.js";
+import { VectorDB } from "../services/vectorDB.js";
+
 import path from 'path';
 
 const STORE_PATH = path.join(process.cwd(), 'backend', 'data', 'book_vectors.json');
@@ -176,16 +177,19 @@ export const handleGeminiRecommendation = async (req, res) => {
     let retrieved = [];
     if (useRAG) {
       try {
-        const store = new JsonVectorStore(STORE_PATH).load();
-        if (store.data.vectors.length > 0) {
-          // Lazy import to avoid circular
+        const db = await new VectorDB().init();
+        // Only query if store has data; local driver exposes data length
+        let canQuery = true;
+        if (db.driver === 'local') {
+          canQuery = (db.index?.data?.vectors || []).length > 0;
+        }
+        if (canQuery) {
           const { embedText } = await import('../utils/embeddings.js');
           const qVec = await embedText(input || `${mood || ''} ${personality || ''}`.trim());
-          retrieved = store.search(qVec, Math.min(Number(topK) || 5, 10));
+          retrieved = await db.query({ vector: qVec, topK: Math.min(Number(topK) || 5, 10) });
         }
       } catch (e) {
-        // Non-fatal; just proceed without retrieved context
-        console.warn('RAG retrieval failed or empty store:', e?.message || e);
+        console.warn('RAG retrieval failed:', e?.message || e);
       }
     }
 
