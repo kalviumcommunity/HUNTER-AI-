@@ -4,7 +4,7 @@ import { handleGeminiRecommendation } from '../controllers/recommendController.j
 const router = express.Router();
 
 function validateRecommendPayload(req, res, next) {
-	const { userPrompt, mood, personality, wantBuyLinks, temperature, topP } = req.body || {};
+	const { userPrompt, mood, personality, wantBuyLinks, temperature, topP, modelTopK, topK } = req.body || {};
 	if (typeof userPrompt !== 'string' || userPrompt.trim().length === 0) {
 		return res.status(400).json({ error: 'userPrompt (string) is required' });
 	}
@@ -13,6 +13,12 @@ function validateRecommendPayload(req, res, next) {
 	}
 	if (topP !== undefined && (typeof topP !== 'number' || topP <= 0 || topP > 1)) {
 		return res.status(400).json({ error: 'topP must be a number in (0, 1]' });
+	}
+	if (modelTopK !== undefined && (typeof modelTopK !== 'number' || modelTopK <= 0)) {
+		return res.status(400).json({ error: 'modelTopK must be a positive number' });
+	}
+	if (topK !== undefined && (typeof topK !== 'number' || topK <= 0)) {
+		return res.status(400).json({ error: 'topK must be a positive number' });
 	}
 	if (wantBuyLinks !== undefined && typeof wantBuyLinks !== 'boolean') {
 		return res.status(400).json({ error: 'wantBuyLinks must be a boolean' });
