@@ -4,6 +4,10 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { buildPrompt } from "../utils/dynamicPrompt.js"; // NEW
 import { systemPrompt } from "../utils/prompt.js"; // keep if you want legacy text
 import { estimateTokens } from "../utils/tokenizer.js";
+import { JsonVectorStore } from "../utils/vectorStore.js";
+import path from 'path';
+
+const STORE_PATH = path.join(process.cwd(), 'backend', 'data', 'book_vectors.json');
 
 dotenv.config();
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -161,8 +165,28 @@ export const handleGeminiRecommendation = async (req, res) => {
       mood,
       personality,
       wantBuyLinks = true,
-      temperature = 0.7
+      temperature = 0.7,
+      useRAG = false,
+      topK = 5,
+      topP = 0.9
     } = req.body || {};
+
+    // Optional retrieval
+    let retrieved = [];
+    if (useRAG) {
+      try {
+        const store = new JsonVectorStore(STORE_PATH).load();
+        if (store.data.vectors.length > 0) {
+          // Lazy import to avoid circular
+          const { embedText } = await import('../utils/embeddings.js');
+          const qVec = await embedText(input || `${mood || ''} ${personality || ''}`.trim());
+          retrieved = store.search(qVec, Math.min(Number(topK) || 5, 10));
+        }
+      } catch (e) {
+        // Non-fatal; just proceed without retrieved context
+        console.warn('RAG retrieval failed or empty store:', e?.message || e);
+      }
+    }
 
     // 1) Build the enhanced dynamic prompt with multishot examples
     const prompt = buildPrompt({
@@ -172,7 +196,8 @@ export const handleGeminiRecommendation = async (req, res) => {
       avoidList: sessionState.avoidList,
       recentTurns: sessionState.recentTurns,
       wantBuyLinks,
-      userPreferences: sessionState.userPreferences
+      userPreferences: sessionState.userPreferences,
+      retrieved
     });
 
     const estimatedPromptTokens = estimateTokens(prompt);
@@ -188,7 +213,7 @@ export const handleGeminiRecommendation = async (req, res) => {
       generationConfig: {
         temperature,
         responseMimeType: "application/json",
-        topP: 0.9,
+        topP,
         topK: 40
       }
     });
@@ -236,12 +261,14 @@ export const handleGeminiRecommendation = async (req, res) => {
       context: {
         userPreferences: sessionState.userPreferences,
         sessionLength: sessionState.conversationContext.length,
-        avoidListSize: sessionState.avoidList.length
+        avoidListSize: sessionState.avoidList.length,
+        retrieved
       },
       tokenReport: {
         estimatedPromptTokens: estimatedPromptTokens,
         estimatedResponseTokens: estimatedResponseTokens,
-        estimatedTotalTokens: estimatedPromptTokens + estimatedResponseTokens
+        estimatedTotalTokens: estimatedPromptTokens + estimatedResponseTokens,
+        sampling: { topP, temperature }
       }
     };
 

@@ -311,11 +311,12 @@ const DEFAULT_BUDGET = {
   systemMax: 1200,                // system section cap
   examplesMax: 2200,              // examples section cap
   historyMax: 900,                // history cap
+  retrievedMax: 800,
   taskMax: 2200                   // user + task + schema cap
 };
 
 /**
- * Compose the final prompt with multishot examples and token budgeting.
+ * Compose the final prompt with multishot examples, retrieved context, and token budgeting.
  */
 export function buildPrompt({
   input,
@@ -325,7 +326,8 @@ export function buildPrompt({
   recentTurns = [],
   wantBuyLinks = false,
   userPreferences = {},
-  tokenBudget = DEFAULT_BUDGET
+  tokenBudget = DEFAULT_BUDGET,
+  retrieved = [] // array of { id, score, metadata }
 }) {
   const { lang, persona, callToolsHint, avoidRepeat } = runtimePolicy({
     input,
@@ -359,18 +361,29 @@ General rules:
 `.trim();
   system = truncateTextToTokens(system, tokenBudget.systemMax);
 
-  // HISTORY (newest first, cap tokens)
+  // HISTORY
   const historyStrings = recentTurns
     .slice(-12)
     .map(t => `${t.role.toUpperCase()}: ${t.text}`);
   const { items: cappedHistory } = truncateArrayToBudget(historyStrings, tokenBudget.historyMax);
   const historyText = cappedHistory.join("\n");
 
-  // EXAMPLES (flatten to strings and cap)
+  // EXAMPLES
   const exampleStrings = selectedExamples
     .map(ex => `USER: ${ex.user}\nASSISTANT(JSON): ${JSON.stringify(ex.assistant)}`);
   const { items: cappedExamples } = truncateArrayToBudget(exampleStrings, tokenBudget.examplesMax);
   const examplesText = cappedExamples.join("\n\n");
+
+  // RETRIEVED CONTEXT (if any)
+  let retrievedText = "";
+  if (retrieved && retrieved.length) {
+    const rows = retrieved.map(r => {
+      const m = r.metadata || {};
+      return `- ${m.title} by ${m.author} [${m.genre}] (score: ${r.score.toFixed(3)}): ${m.summary}`;
+    });
+    const raw = `\nRetrieved context (top-k similar books):\n${rows.join("\n")}`;
+    retrievedText = truncateTextToTokens(raw, tokenBudget.retrievedMax);
+  }
 
   // TASK + CONTEXT
   const userContext = `
@@ -387,10 +400,11 @@ User context:
 The user said: "${input || "No input"}"
 
 ${userContext}
+${retrievedText}
 
 Your task: Provide 3-5 personalized book recommendations that feel like you're having a conversation with a friend who loves books. Each recommendation should include a detailed explanation of why it's perfect for this user, plus a brief plot summary to help them decide.
 
-Consider the user's reading history, preferred genres, and themes when making recommendations. If they've shown preferences for certain types of books, try to include some that align with those preferences while also introducing them to new possibilities.
+Consider the user's reading history, preferred genres, and themes, and when provided, the retrieved similar books. You can use the retrieved items as inspiration but do not simply echo them; diversify and justify recommendations.
 
 Study the examples above to understand the expected style, depth, and structure of responses.
 
@@ -398,13 +412,12 @@ ${OUTPUT_SCHEMA}
 `.trim();
   task = truncateTextToTokens(task, tokenBudget.taskMax);
 
-  // Combine sections and, if needed, shave examples/history to fit overall budget
+  // Combine
   let sections = [system, historyText && `\nHistory:\n${historyText}`, examplesText && `\nExamples:\n${examplesText}`, task].filter(Boolean);
   let prompt = sections.join("\n\n");
 
   const totalTokens = estimateTokens(prompt);
   if (totalTokens > tokenBudget.maxPromptTokens) {
-    // Prefer shaving examples, then history
     let examplesOnly = examplesText;
     let historyOnly = historyText;
     let shavedPrompt = sections.join("\n\n");
