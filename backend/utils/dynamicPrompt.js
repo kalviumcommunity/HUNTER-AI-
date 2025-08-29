@@ -11,6 +11,18 @@ function detectLang(text = "") {
 }
 
 /**
+ * Internal reasoning guidance (chain-of-thought style) — keep private.
+ * The model should reason step-by-step but never reveal the chain; only return final JSON.
+ */
+const REASONING_GUIDANCE = `
+Reason silently:
+- Break the task into steps: parse user intent → map to genres/themes → pick 3–5 diverse books → craft reasons and summaries → validate against schema.
+- Cross-check constraints: avoid repeats; align to mood/personality; reflect cultural context when relevant.
+- Validate JSON structure strictly before responding.
+Do not output your reasoning. Output ONLY the final JSON as specified by the schema.
+`.trim();
+
+/**
  * Enhanced multishot examples library with conversational style
  * Multiple examples per category to improve AI learning and response quality
  */
@@ -385,6 +397,12 @@ General rules:
     retrievedText = truncateTextToTokens(raw, tokenBudget.retrievedMax);
   }
 
+  // OPTIONAL: Chain-of-thought guidance (private)
+  let reasoningText = "";
+  if (useCoT) {
+    reasoningText = truncateTextToTokens(`\nInternal guidance (do not reveal):\n${REASONING_GUIDANCE}`, tokenBudget.reasoningMax);
+  }
+
   // TASK + CONTEXT
   const userContext = `
 User context:
@@ -401,6 +419,7 @@ The user said: "${input || "No input"}"
 
 ${userContext}
 ${retrievedText}
+${reasoningText}
 
 Your task: Provide 3-5 personalized book recommendations that feel like you're having a conversation with a friend who loves books. Each recommendation should include a detailed explanation of why it's perfect for this user, plus a brief plot summary to help them decide.
 

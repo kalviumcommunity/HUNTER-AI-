@@ -6,6 +6,59 @@
 
 ---
 
+## Vector Database (RAG)
+
+Hunter supports a production-ready vector DB via a clean abstraction. You can run locally with a JSON-backed store, or use Pinecone in the cloud.
+
+### Configure
+
+Create a `.env` with:
+
+```
+# required for AI
+GEMINI_API_KEY=your_gemini_key
+
+# optional, retrieval
+VECTOR_DB_DRIVER=local            # 'pinecone' or 'local'
+VECTOR_DB_NAMESPACE=books
+PINECONE_API_KEY=your_pinecone_key   # required if VECTOR_DB_DRIVER=pinecone
+PINECONE_INDEX=hunter-books          # your index name
+PINECONE_HOST=                       # optional, set if needed by region/deployment
+FRONTEND_ORIGIN=http://localhost:5173
+PORT=5000
+```
+
+### Index seed data
+
+```
+curl -X POST http://localhost:5000/api/embed/reindex
+```
+
+### Semantic search
+
+```
+curl -X POST http://localhost:5000/api/embed/search \
+  -H "Content-Type: application/json" \
+  -d '{"query":"dragon romance with politics","topK":5}'
+```
+
+### Use RAG in recommendations
+
+POST to `/api/recommend` with `useRAG: true`:
+
+```
+{
+  "userPrompt": "books like Fourth Wing",
+  "useRAG": true,
+  "topK": 5,
+  "temperature": 0.7,
+  "topP": 0.9,
+  "modelTopK": 40
+}
+```
+
+---
+
 ## Key Features
 
 - Mood and personality-based book suggestions
@@ -31,7 +84,6 @@ Prompting is used to guide the LLM (e.g., Gemini, GPT, or Mistral) to behave lik
 ```
 You are Hunter, a cozy book-loving assistant. Based on the user’s mood or genre, recommend 3 books. Include title, author, summary, and a reason why the user would enjoy it.
 ```
-
 
 ---
 
@@ -82,8 +134,8 @@ RAG improves the quality of recommendations by retrieving relevant book entries 
 
 **Implementation:**
 
-- Book metadata is embedded using sentence-transformers or OpenAI embeddings
+- Book metadata is embedded using Google `text-embedding-004`
 
-- Stored in a vector database,  FAISS
+- Stored in a vector database (Pinecone or local JSON dev store)
 
 - The top-k relevant books are retrieved and injected into the LLM prompt

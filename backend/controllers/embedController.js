@@ -2,9 +2,8 @@
 import fs from 'fs';
 import path from 'path';
 import { embedTexts, embedText } from '../utils/embeddings.js';
-import { JsonVectorStore } from '../utils/vectorStore.js';
+import { VectorDB } from '../services/vectorDB.js';
 
-const STORE_PATH = path.join(process.cwd(), 'backend', 'data', 'book_vectors.json');
 const SEED_PATH = path.join(process.cwd(), 'backend', 'tools', 'seedBooks.json');
 
 export async function reindexBooks(req, res) {
@@ -16,10 +15,11 @@ export async function reindexBooks(req, res) {
 		const texts = books.map(b => `${b.title} by ${b.author}. ${b.genre}. ${b.summary}`);
 		const vectors = await embedTexts(texts);
 
-		const store = new JsonVectorStore(STORE_PATH).load().clear();
-		store.upsertMany(books.map((b, i) => ({ id: b.id, vector: vectors[i], metadata: b }))).save();
+		const db = await new VectorDB().init();
+		await db.deleteByIds(books.map(b => b.id));
+		await db.upsertMany(books.map((b, i) => ({ id: b.id, vector: vectors[i], metadata: b })));
 
-		return res.json({ ok: true, indexed: books.length });
+		return res.json({ ok: true, indexed: books.length, driver: db.driver });
 	} catch (e) {
 		console.error('Reindex error', e);
 		return res.status(500).json({ error: 'Failed to reindex' });
@@ -33,9 +33,9 @@ export async function semanticSearch(req, res) {
 			return res.status(400).json({ error: 'query (string) is required' });
 		}
 		const qVec = await embedText(query);
-		const store = new JsonVectorStore(STORE_PATH).load();
-		const hits = store.search(qVec, Number(topK) || 5);
-		return res.json({ ok: true, results: hits });
+		const db = await new VectorDB().init();
+		const hits = await db.query({ vector: qVec, topK: Number(topK) || 5 });
+		return res.json({ ok: true, results: hits, driver: db.driver });
 	} catch (e) {
 		console.error('Search error', e);
 		return res.status(500).json({ error: 'Failed to search' });
