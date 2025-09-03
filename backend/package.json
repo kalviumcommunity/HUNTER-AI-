@@ -4,9 +4,11 @@
   "main": "server.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node ./tests/vector.test.js",
     "start": "node server.js",
-    "test:multishot": "node test-multishot.js"
+    "test:multishot": "node test-multishot.js",
+    "embed:reindex": "curl -s -X POST http://localhost:${PORT:-5000}/api/embed/reindex | cat",
+    "embed:search": "node -e \"(async()=>{const axios=require('axios');const res=await axios.post('http://localhost:${PORT:-5000}/api/embed/search',{query:'dragon romance',topK:5});console.log(JSON.stringify(res.data,null,2));})().catch(e=>{console.error(e?.message||e);process.exit(1)})\""
   },
   "keywords": [],
   "author": "",

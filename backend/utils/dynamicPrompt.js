@@ -12,7 +12,7 @@ function detectLang(text = "") {
 
 /**
  * Internal reasoning guidance (chain-of-thought style) — keep private.
- * The model should reason step-by-step but never reveal the chain; only return final JSON.
+ * The model should reason step-by-step but never reveal the chain; only return the final JSON.
  */
 const REASONING_GUIDANCE = `
 Reason silently:
@@ -324,7 +324,8 @@ const DEFAULT_BUDGET = {
   examplesMax: 2200,              // examples section cap
   historyMax: 900,                // history cap
   retrievedMax: 800,
-  taskMax: 2200                   // user + task + schema cap
+  taskMax: 2200,                  // user + task + schema cap
+  reasoningMax: 220               // private CoT guidance cap
 };
 
 /**
@@ -339,7 +340,8 @@ export function buildPrompt({
   wantBuyLinks = false,
   userPreferences = {},
   tokenBudget = DEFAULT_BUDGET,
-  retrieved = [] // array of { id, score, metadata }
+  retrieved = [], // array of { id, score, metadata }
+  useCoT = false  // enable private chain-of-thought guidance
 }) {
   const { lang, persona, callToolsHint, avoidRepeat } = runtimePolicy({
     input,
