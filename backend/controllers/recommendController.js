@@ -217,7 +217,7 @@ export const handleGeminiRecommendation = async (req, res) => {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
         temperature,
-        responseMimeType: "application/json",
+        responseMimeType: 'application/json',
         topP,
         topK: modelTopK
       }
@@ -233,8 +233,9 @@ export const handleGeminiRecommendation = async (req, res) => {
       console.log("Function call detected:", pendingCall.name);
     }
 
-    // 4) Parse and validate JSON response
+    // 4) Expect JSON per mode-based schema; repair if needed
     let outText = result.response.text();
+    const estimatedResponseTokens = estimateTokens(outText);
     let data;
     try {
       data = JSON.parse(outText);
@@ -243,41 +244,30 @@ export const handleGeminiRecommendation = async (req, res) => {
       const end = outText.lastIndexOf("}");
       if (start !== -1 && end !== -1) {
         const sliced = outText.slice(start, end + 1);
-        try {
-          data = JSON.parse(sliced);
-        } catch (parseError) {
-          console.error("JSON repair failed:", parseError);
-          throw new Error("Invalid JSON from model after repair attempt");
-        }
-      } else {
-        throw new Error("Invalid JSON from model - no valid JSON structure found");
+        try { data = JSON.parse(sliced); } catch {}
       }
     }
 
-    const responseTextForEstimate = JSON.stringify(data);
-    const estimatedResponseTokens = estimateTokens(responseTextForEstimate);
+    // Fallback: if parsing still failed, treat as chat message
+    if (!data || typeof data !== 'object') {
+      data = { mode: 'chat', message: outText };
+    }
 
-    // 5) Update session state with new information
-    updateSessionState(input, mood, personality, data.recommendations || []);
+    // Normalize recommendation array shape
+    if (data.mode === 'recommendation') {
+      const books = Array.isArray(data.books) ? data.books : [];
+      updateSessionState(input, mood, personality, books);
+    } else if (data.mode === 'chat+recommend') {
+      const parts = Array.isArray(data.parts) ? data.parts : [];
+      const books = parts
+        .filter(p => p && p.type === 'recommendation' && p.book)
+        .map(p => p.book);
+      updateSessionState(input, mood, personality, books);
+    } else {
+      updateSessionState(input, mood, personality, []);
+    }
 
-    // 6) Add context information to response for debugging/insights
-    const responseWithContext = {
-      ...data,
-      context: {
-        userPreferences: sessionState.userPreferences,
-        sessionLength: sessionState.conversationContext.length,
-        avoidListSize: sessionState.avoidList.length,
-        retrieved
-      },
-      tokenReport: {
-        estimatedPromptTokens: estimatedPromptTokens,
-        estimatedResponseTokens: estimatedResponseTokens,
-        estimatedTotalTokens: estimatedPromptTokens + estimatedResponseTokens,
-        sampling: { topP, temperature, topK: modelTopK }
-      }
-    };
-
-    res.json(responseWithContext);
+    res.json(data);
   } catch (error) {
     console.error("Error generating recommendations:", error);
     const errorResponse = {

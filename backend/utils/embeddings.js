@@ -8,15 +8,20 @@ export async function embedTexts(texts = []) {
 	if (!Array.isArray(texts)) throw new Error("embedTexts expects an array of strings");
 	if (texts.length === 0) return [];
 	const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
-	// API supports batch embeddings by passing an array of contents
-	const result = await model.embedContent({
-		contents: texts.map(t => ({ role: "user", parts: [{ text: String(t ?? "") }] }))
+	// Use batchEmbedContents with requests array
+	const result = await model.batchEmbedContents({
+		requests: texts.map(t => ({
+			content: { parts: [{ text: String(t ?? "") }] }
+		}))
 	});
-	const vectors = result.embeddings?.map(e => e.values) || [];
+	const vectors = (result.embeddings || []).map(e => e.values);
 	return vectors;
 }
 
 export async function embedText(text = "") {
-	const [vec] = await embedTexts([text]);
-	return vec || [];
+	const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
+	const res = await model.embedContent({
+		content: { parts: [{ text: String(text ?? "") }] }
+	});
+	return res.embedding?.values || [];
 }

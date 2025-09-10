@@ -30,19 +30,36 @@ function App() {
         wantBuyLinks: true
       });
 
-      const aiResponse = {
-        role: 'assistant',
-        content: res.data.recommendations || [],
-        timestamp: new Date()
-      };
-
-      setConversation(prev => [...prev, aiResponse]);
-      setRecommendations(res.data.recommendations || []);
+      const payload = res.data || {};
+      if (payload && payload.mode === 'recommendation') {
+        const aiResponse = {
+          role: 'assistant',
+          content: payload,
+          timestamp: new Date()
+        };
+        setConversation(prev => [...prev, aiResponse]);
+      } else if (payload && payload.mode === 'chat+recommend') {
+        const aiResponse = {
+          role: 'assistant',
+          content: payload,
+          timestamp: new Date()
+        };
+        setConversation(prev => [...prev, aiResponse]);
+      } else {
+        const message = (typeof payload === 'string') ? payload : (payload?.message || 'Let’s talk books!');
+        const aiResponse = {
+          role: 'assistant',
+          content: { mode: 'chat', message },
+          timestamp: new Date()
+        };
+        setConversation(prev => [...prev, aiResponse]);
+      }
+      setRecommendations([]);
       setInput('');
     } catch (err) {
       const errorResponse = {
         role: 'assistant',
-        content: [{ title: 'Error', author: 'System', genre: 'Error', reason: 'Sorry, I encountered an error. Please try again.' }],
+        content: 'Sorry, I encountered an error. Please try again.',
         timestamp: new Date()
       };
       setConversation(prev => [...prev, errorResponse]);
@@ -93,44 +110,37 @@ function App() {
                   <span>{message.content}</span>
                 ) : (
                   <div>
-                    <span className="badge accent">🤖 Hunter's Recommendations</span>
-                    {Array.isArray(message.content) && message.content.length > 0 ? (
+                    {message.content?.mode === 'recommendation' ? (
                       <div className="col" style={{ gap: 12 }}>
-                        {message.content.map((book, bookIndex) => (
-                          <div key={bookIndex} className="book">
-                            <h3>{book.title}</h3>
-                            <p><strong>Author:</strong> {book.author}</p>
-                            {book.genre && <p><strong>Genre:</strong> {book.genre}</p>}
-                            {book.reason && (
-                              <p className="why">
-                                <strong>Why it fits:</strong> {book.reason}
-                              </p>
-                            )}
-                            {book.summary && (
-                              <p>
-                                <strong>Summary:</strong> {book.summary}
-                              </p>
-                            )}
-                            {book.buyLinks && book.buyLinks.length > 0 && (
-                              <div className="row" style={{ flexWrap: 'wrap' }}>
-                                {book.buyLinks.map((link, linkIndex) => (
-                                  <a
-                                    key={linkIndex}
-                                    className="btn"
-                                    href={link.link}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                  >
-                                    🛒 Buy on {link.marketplace}
-                                  </a>
-                                ))}
-                              </div>
-                            )}
+                        <span className="badge accent">📚 Recommendations</span>
+                        {(message.content.books || []).map((b, i) => (
+                          <div key={i} className="book card">
+                            <h3 className="book-title">{b.title}</h3>
+                            <p><strong>Author:</strong> {b.author}</p>
+                            {b.genre && <p><strong>Genre:</strong> {b.genre}</p>}
+                            {b.description && <p>{b.description}</p>}
                           </div>
                         ))}
                       </div>
+                    ) : message.content?.mode === 'chat+recommend' ? (
+                      <div className="col" style={{ gap: 12 }}>
+                        {(message.content.parts || []).map((part, i) => (
+                          part.type === 'recommendation' ? (
+                            <div key={i} className="book card">
+                              <h3 className="book-title">{part.book?.title}</h3>
+                              {part.book?.author && <p><strong>Author:</strong> {part.book.author}</p>}
+                              {part.book?.genre && <p><strong>Genre:</strong> {part.book.genre}</p>}
+                              {part.book?.description && <p>{part.book.description}</p>}
+                            </div>
+                          ) : (
+                            <div key={i} className="recommendations-text"><span>{part.message}</span></div>
+                          )
+                        ))}
+                      </div>
                     ) : (
-                      <p className="mono">{typeof message.content === 'string' ? message.content : 'No recommendations available.'}</p>
+                      <div className="recommendations-text">
+                        <span>{message.content?.message || ''}</span>
+                      </div>
                     )}
                   </div>
                 )}

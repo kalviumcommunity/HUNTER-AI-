@@ -8,7 +8,9 @@
     "start": "node server.js",
     "test:multishot": "node test-multishot.js",
     "embed:reindex": "curl -s -X POST http://localhost:${PORT:-5000}/api/embed/reindex | cat",
-    "embed:search": "node -e \"(async()=>{const axios=require('axios');const res=await axios.post('http://localhost:${PORT:-5000}/api/embed/search',{query:'dragon romance',topK:5});console.log(JSON.stringify(res.data,null,2));})().catch(e=>{console.error(e?.message||e);process.exit(1)})\""
+    "embed:search": "node -e \"(async()=>{const axios=require('axios');const res=await axios.post('http://localhost:${PORT:-5000}/api/embed/search',{query:'dragon romance',topK:5});console.log(JSON.stringify(res.data,null,2));})().catch(e=>{console.error(e?.message||e);process.exit(1)})\"",
+    "check:pinecone": "node ./scripts/check-pinecone.js",
+    "smoke:pinecone": "node -r dotenv/config -e \"(async()=>{const {VectorDB}=await import('./services/vectorDB.js');const {embedText}=await import('./utils/embeddings.js');const db=await new VectorDB({driver:'pinecone'}).init();const v=await embedText('hunter pinecone smoke vector');const near=v.map((x)=>x*0.99);await db.upsertMany([{id:'smoke_1',vector:v,metadata:{tag:'smoke'}}]);const res=await db.query({vector:near,topK:1});console.log('query:',res);await db.deleteByIds(['smoke_1']);console.log('✅ pinecone upsert/query/delete OK')})().catch(e=>{console.error('❌ pinecone smoke failed',e?.message||e);process.exit(1)})\""
   },
   "keywords": [],
   "author": "",
@@ -16,6 +18,7 @@
   "description": "",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@pinecone-database/pinecone": "^6.1.2",
     "axios": "^1.11.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
